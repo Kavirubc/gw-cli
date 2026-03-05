@@ -54,6 +54,49 @@ NOTE:
                 ),
         );
         cmd = cmd.subcommand(
+            Command::new("+run")
+                .about("Execute a function in an Apps Script project via the Apps Script API")
+                .arg(
+                    Arg::new("script")
+                        .long("script")
+                        .help("Script Project ID")
+                        .required(true)
+                        .value_name("ID"),
+                )
+                .arg(
+                    Arg::new("function")
+                        .long("function")
+                        .help("Name of the function to run")
+                        .required(true)
+                        .value_name("NAME"),
+                )
+                .arg(
+                    Arg::new("params")
+                        .long("params")
+                        .help("JSON array of parameters to pass to the function")
+                        .value_name("JSON"),
+                )
+                .arg(
+                    Arg::new("dev-mode")
+                        .long("dev-mode")
+                        .help("Run using the latest saved (not deployed) script code")
+                        .action(clap::ArgAction::SetTrue),
+                )
+                .after_help(
+                    "\
+PREREQUISITES:
+  1. Auth with cloud-platform scope: gws auth login --full
+  2. [MANUAL] Link the script to your GCP project:
+     Open the script editor -> Project Settings -> Change GCP project
+  3. Add to appsscript.json: \"executionApi\": {\"access\": \"MYSELF\"}
+
+EXAMPLES:
+  gws script +run --script SCRIPT_ID --function myFunction
+  gws script +run --script SCRIPT_ID --function myFunction --params '[\"arg1\"]'
+  gws script +run --script SCRIPT_ID --function myFunction --dev-mode",
+                ),
+        );
+        cmd = cmd.subcommand(
             Command::new("+push")
                 .about("[Helper] Upload local files to an Apps Script project")
                 .arg(
@@ -109,6 +152,73 @@ TIPS:
                     serde_json::to_string_pretty(&json!({ "status": "opened", "url": url }))
                         .unwrap_or_default()
                 );
+                return Ok(true);
+            }
+
+            if let Some(matches) = matches.subcommand_matches("+run") {
+                let script_id = matches.get_one::<String>("script").unwrap();
+                let func_name = matches.get_one::<String>("function").unwrap();
+                let dev_mode = matches.get_flag("dev-mode");
+                let params_array: serde_json::Value = match matches.get_one::<String>("params") {
+                    Some(p) => serde_json::from_str(p).map_err(|e| {
+                        GwsError::Validation(format!("Invalid --params JSON: {e}"))
+                    })?,
+                    None => json!([]),
+                };
+
+                // Find method: scripts.run
+                let scripts_res = doc.resources.get("scripts").ok_or_else(|| {
+                    GwsError::Discovery("Resource 'scripts' not found".to_string())
+                })?;
+                let run_method = scripts_res.methods.get("run").ok_or_else(|| {
+                    GwsError::Discovery("Method 'scripts.run' not found".to_string())
+                })?;
+
+                let params = json!({ "scriptId": script_id });
+                let params_str = params.to_string();
+
+                let body = json!({
+                    "function": func_name,
+                    "parameters": params_array,
+                    "devMode": dev_mode,
+                });
+                let body_str = body.to_string();
+
+                let scopes: Vec<&str> = run_method.scopes.iter().map(|s| s.as_str()).collect();
+                let (token, auth_method) = match auth::get_token(&scopes).await {
+                    Ok(t) => (Some(t), executor::AuthMethod::OAuth),
+                    Err(_) => (None, executor::AuthMethod::None),
+                };
+
+                let result = executor::execute_method(
+                    doc,
+                    run_method,
+                    Some(&params_str),
+                    Some(&body_str),
+                    token.as_deref(),
+                    auth_method,
+                    None,
+                    None,
+                    matches.get_flag("dry-run"),
+                    &executor::PaginationConfig::default(),
+                    None,
+                    &crate::helpers::modelarmor::SanitizeMode::Warn,
+                    &crate::formatter::OutputFormat::default(),
+                    false,
+                )
+                .await;
+
+                if let Err(GwsError::Api { code: 403, .. }) = &result {
+                    eprintln!(
+                        "[MANUAL] GCP project linking required.\n\
+                         \x20  Link the script to your GCP project via the script editor:\n\
+                         \x20    -> Project Settings -> Change GCP project\n\
+                         \x20  Run: gws script +open --script {script_id}\n\
+                         \x20  Then add to appsscript.json: \"executionApi\": {{\"access\": \"MYSELF\"}}"
+                    );
+                }
+
+                result?;
                 return Ok(true);
             }
 
