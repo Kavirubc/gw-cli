@@ -116,12 +116,14 @@ fn token_cache_path() -> PathBuf {
 pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
     const USAGE: &str = concat!(
         "Usage: gws auth <login|setup|status|export|logout>\n\n",
-        "  login   Authenticate via OAuth2 (opens browser)\n",
+        "  login   [MANUAL] Authenticate via OAuth2 (opens browser)\n",
         "          --readonly   Request read-only scopes\n",
         "          --full       Request all scopes incl. pubsub + cloud-platform\n",
         "                       (may trigger restricted_client for unverified apps)\n",
         "          --scopes     Comma-separated custom scopes\n",
         "  setup   Configure GCP project + OAuth client (requires gcloud)\n",
+        "          [MANUAL] Download OAuth client JSON from GCP Console first:\n",
+        "                   GCP Console -> APIs & Services -> Credentials -> Create OAuth client\n",
         "          --project    Use a specific GCP project\n",
         "  status  Show current authentication state\n",
         "  export  Print decrypted credentials to stdout\n",
@@ -159,7 +161,7 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for CliFlowDelega
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>>
     {
         Box::pin(async move {
-            eprintln!("Open this URL in your browser to authenticate:\n");
+            eprintln!("[MANUAL] Open this URL in your browser to authenticate:\n");
             eprintln!("  {url}\n");
             Ok(String::new())
         })
